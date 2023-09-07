@@ -14,14 +14,15 @@ pub mod net;
 pub struct GlobalCollection {
     documents: HashMap<String, DataDocument>,
     config: HydratedConfig,
+    event_loop: Py<PyAny>
 }
 pub struct DataDocument {
     name: String,
     function: Py<PyAny>,
 }
 impl GlobalCollection {
-    pub fn new(config: HydratedConfig) -> Self {
-        GlobalCollection { documents: HashMap::new(), config: config }
+    pub fn new(config: HydratedConfig, event_loop: Py<PyAny>) -> Self {
+        GlobalCollection { documents: HashMap::new(), config: config, event_loop: event_loop }
     }
 
     pub fn get_document(&self, name: &str) -> &DataDocument { 
@@ -38,11 +39,13 @@ impl DataDocument {
         DataDocument { name: name, function: function }
     }
 
-    pub async fn execute_empty(&self) {
-        let _ = call_function(&self.function, QueryData::default(), true).await;
+    pub async fn execute_empty(&self, event_loop: Option<&Py<PyAny>>,) {
+        let _ = self.execute(event_loop, QueryData::default(), true);
     }
-    pub async fn execute(&self, query: QueryData, is_init: bool) -> String {
-        call_function(&self.function, query, is_init).await.unwrap().to_string()
+    pub async fn execute(&self, event_loop: Option<&Py<PyAny>>, query: QueryData, is_init: bool) -> String {
+        let result = call_function(&self.function, query, is_init, event_loop).await;
+        if result.is_err() { println!("execute(): Encountered Python Error: {}", result.unwrap_err().message); return "".to_string() }
+        result.unwrap().to_string()
     }
 }
 
@@ -58,7 +61,15 @@ impl Handler for QueryHandler {
         let col = req.guard::<&State<GlobalCollection>>().await
                                                            .map(|collection| collection).unwrap().inner();
 
-        Outcome::from(req, execute_query(col, &self.document_name, extract_query(req.uri().query().unwrap())).await)
+        let query = req.uri().query();
+        let query_data = if !query.is_none() {
+            extract_query(query.unwrap())
+        }
+        else {
+            extract_query_from_str("")
+        };
+
+        Outcome::from(req, execute_query(col, &self.document_name, query_data).await)
     }
 }
 
@@ -83,19 +94,18 @@ impl Default for QueryData {
 
 #[get("/")]
 pub async fn index(_collection: &State<GlobalCollection>) -> String {
-    tokio::time::sleep(std::time::Duration::new(5, 0)).await;
     "Hello World".to_string()
 }
 
 ///-- Function Handlers --///
 pub async fn initiate() -> Result<(GlobalCollection, Vec<Route>), FileReadError> {
-    let _ = initiate_python().expect("Python Initialization Error Occurred");
+    let event_loop = initiate_python().expect("Python Initialization Error Occurred");
 
     let config = read_toml("./")?;
     let _ = run_programs(&config)?;
 
     let mut routes: Vec<Route> = routes![index];
-    let mut collection = GlobalCollection::new(config.clone());
+    let mut collection = GlobalCollection::new(config.clone(), event_loop);
     let decs = get_register_decorators();
     let mut index = 0;
     for dec in decs.iter() {
@@ -103,7 +113,7 @@ pub async fn initiate() -> Result<(GlobalCollection, Vec<Route>), FileReadError>
         let doc = DataDocument::new(name.to_string(), dec.get_wraps().clone());
 
         if dec.get_mode() == "init" {
-            doc.execute_empty().await;
+            doc.execute_empty(Some(&collection.event_loop)).await;
             continue;
         }
         
@@ -132,7 +142,7 @@ fn run_programs(config: &HydratedConfig) -> Result<(), FileReadError> {
 
         if err.is_err() {
             println!("Python Error: {}", err.unwrap_err().message);
-            panic!()
+            return Err(FileReadError {});
         }
     };
 
@@ -142,12 +152,15 @@ fn run_programs(config: &HydratedConfig) -> Result<(), FileReadError> {
 fn extract_query(query: Query) -> QueryData {
     let query_data: Vec<_> = query.segments().collect();
     let q = query_data.get(0).unwrap_or(&("q", "")).1;
-    let json: QueryData = serde_json::from_str(q).unwrap();
 
-    json
+    extract_query_from_str(q)
+}
+
+fn extract_query_from_str(query: &str) -> QueryData {
+    serde_json::from_str(query).unwrap_or_default()
 }
 
 async fn execute_query(collection: &GlobalCollection, document_name: &str, query: QueryData) -> String {
     let doc = collection.get_document(document_name);
-    doc.execute(query, false).await
+    doc.execute(Some(&collection.event_loop), query, false).await
 }

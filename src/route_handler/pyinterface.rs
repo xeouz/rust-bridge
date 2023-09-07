@@ -66,11 +66,11 @@ impl IntoPy<Py<PyAny>> for QueryItem {
     }
 }
 
-pub fn initiate_python() -> Result<(), PyErr> {
+pub fn initiate_python() -> Result<Py<PyAny>, PyErr> {
     pyo3::append_to_inittab!(athen_rs_module);
     pyo3::prepare_freethreaded_python();
 
-    Python::with_gil(|py| -> Result<(), PyErr> {
+    let ret = Python::with_gil(|py| -> Result<_, PyErr> {
         let athen_rs = wrap_pymodule!(athen_rs_module)(py).into_ref(py);
         let sys = PyModule::import(py, "sys")?;
         let py_modules: &PyDict = sys.getattr("modules")?.downcast()?;
@@ -82,10 +82,13 @@ pub fn initiate_python() -> Result<(), PyErr> {
         let lib = PyModule::from_code(py, &lib_code, "athen.py", "athen")?;
         py_modules.set_item("athen", lib)?;
 
-        Ok(())
+        let asyncio = PyModule::import(py, "asyncio")?;
+        let event_loop = asyncio.call_method0("new_event_loop")?.into_py(py);
+
+        Ok(event_loop)
     })?;
 
-    Ok(())
+    Ok(ret)
 }
 
 pub fn run_python(code: &str) -> Result<(), PyExecutionError> {
@@ -102,7 +105,7 @@ pub fn run_python(code: &str) -> Result<(), PyExecutionError> {
     Ok(())
 }
 
-pub async fn call_function(function: &Py<PyAny>, query_arg: QueryData, is_init: bool) -> Result<Py<PyAny>, PyExecutionError> {
+pub async fn call_function(function: &Py<PyAny>, query_arg: QueryData, is_init: bool, event_loop: Option<&Py<PyAny>>) -> Result<Py<PyAny>, PyExecutionError> {
     let ret = Python::with_gil(|py| -> PyResult<_> {
         let args = PyTuple::new(py, vec![query_arg.inner.into_py(py)]);
         
@@ -113,7 +116,17 @@ pub async fn call_function(function: &Py<PyAny>, query_arg: QueryData, is_init: 
             function.call0(py)
         }?;
 
-        Ok(result)
+        let inspect = py.import("inspect")?;
+        let is_coro = inspect.call_method1("iscoroutine", (&result,))?;
+        let ret = if !is_coro.is_true()? {
+            result
+        }
+        else {
+            let locals = PyDict::new(py); locals.set_item("coro", result)?; locals.set_item("loop", event_loop.unwrap())?;
+            py.eval("loop.run_until_complete(coro)", None, Some(locals))?.into_py(py)
+        };
+
+        Ok(ret)
     })?;
 
     Ok(ret)
