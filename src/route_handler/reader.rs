@@ -4,10 +4,20 @@ use rocket::figment::value::Value;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
+pub struct AsyncOptions {
+    #[serde(default = "default_safe_async")]
+    safe_async: bool,
+}
+
+#[derive(Deserialize)]
 pub struct Config {
     ip: String,
     port: Option<u16>,
-    documents: Value
+
+    #[serde(alias = "async")]
+    async_opts: AsyncOptions,
+    
+    documents: Value,
 }
 
 #[derive(Debug)]
@@ -17,17 +27,23 @@ pub struct FileReadError;
 pub struct HydratedConfig {
     ip: String,
     port: u16,
-    documents: Vec<(String, String)>
+    documents: Vec<(String, String)>,
+    safe_async: bool,
 }
 
 impl HydratedConfig {
-    pub fn new(ip: String, port: u16, documents: Vec<(String, String)>) -> Self {
-        HydratedConfig { ip: ip, port: port, documents: documents }
+    pub fn new(ip: String, port: u16, documents: Vec<(String, String)>, safe_async: bool) -> Self {
+        HydratedConfig { ip: ip, port: port, documents: documents, safe_async: safe_async }
     }
 
     pub fn get_ip(&self) -> &str { self.ip.as_str() }
     pub fn get_port(&self) -> u16 { self.port }
     pub fn get_documents(&self) -> &Vec<(String, String)> { &self.documents }
+    pub fn get_safe_async(&self) -> bool { self.safe_async }
+}
+
+fn default_safe_async() -> bool {
+    true
 }
 
 pub fn read_file(fname: &str) -> Result<String, FileReadError> {
@@ -64,5 +80,7 @@ pub fn read_toml(fpath: &str) -> Result<HydratedConfig, FileReadError> {
         documents.push((k.to_string(), path));
     }
 
-    Ok(HydratedConfig::new(ip, port, documents))
+    let safe_async = data.async_opts.safe_async;
+
+    Ok(HydratedConfig::new(ip, port, documents, safe_async))
 }

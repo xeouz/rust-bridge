@@ -14,7 +14,7 @@ pub mod net;
 pub struct GlobalCollection {
     documents: HashMap<String, DataDocument>,
     config: HydratedConfig,
-    event_loop: Py<PyAny>
+    event_loop: Py<PyAny>,
 }
 pub struct DataDocument {
     name: String,
@@ -39,11 +39,11 @@ impl DataDocument {
         DataDocument { name: name, function: function }
     }
 
-    pub async fn execute_empty(&self, event_loop: Option<&Py<PyAny>>,) {
-        let _ = self.execute(event_loop, QueryData::default(), true);
+    pub async fn execute_empty(&self, collection: &GlobalCollection,) {
+        let _ = self.execute(collection, QueryData::default(), true);
     }
-    pub async fn execute(&self, event_loop: Option<&Py<PyAny>>, query: QueryData, is_init: bool) -> String {
-        let result = call_function(&self.function, query, is_init, event_loop).await;
+    pub async fn execute(&self, collection: &GlobalCollection, query: QueryData, is_init: bool) -> String {
+        let result = call_function(collection, &self.function, query, is_init).await;
         if result.is_err() { println!("execute(): Encountered Python Error: {}", result.unwrap_err().message); return "".to_string() }
         result.unwrap().to_string()
     }
@@ -99,9 +99,8 @@ pub async fn index(_collection: &State<GlobalCollection>) -> String {
 
 ///-- Function Handlers --///
 pub async fn initiate() -> Result<(GlobalCollection, Vec<Route>), FileReadError> {
-    let event_loop = initiate_python().expect("Python Initialization Error Occurred");
-
     let config = read_toml("./")?;
+    let event_loop = initiate_python(&config).expect("Python Initialization Error Occurred");
     let _ = run_programs(&config)?;
 
     let mut routes: Vec<Route> = routes![index];
@@ -113,7 +112,7 @@ pub async fn initiate() -> Result<(GlobalCollection, Vec<Route>), FileReadError>
         let doc = DataDocument::new(name.to_string(), dec.get_wraps().clone());
 
         if dec.get_mode() == "init" {
-            doc.execute_empty(Some(&collection.event_loop)).await;
+            doc.execute_empty(&collection).await;
             continue;
         }
         
@@ -162,5 +161,5 @@ fn extract_query_from_str(query: &str) -> QueryData {
 
 async fn execute_query(collection: &GlobalCollection, document_name: &str, query: QueryData) -> String {
     let doc = collection.get_document(document_name);
-    doc.execute(Some(&collection.event_loop), query, false).await
+    doc.execute(&collection, query, false).await
 }

@@ -4,6 +4,9 @@ const fn get_toml_data() -> &'static str {
 r#"ip = "127.0.0.1"
 port = 8080
 
+[async]
+safe_async = true
+
 [documents]
 hello = "./endpoints/hello.py"
     "#

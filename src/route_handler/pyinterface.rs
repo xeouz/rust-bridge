@@ -1,6 +1,6 @@
 use pyo3::{PyErr, Python, types::{PyDict, PyTuple, PyModule}, pyclass, PyAny, Py, pymethods, PyResult, pymodule, IntoPy, wrap_pymodule};
 
-use super::{reader::read_file, QueryData, QueryItem};
+use super::{reader::{read_file, HydratedConfig}, QueryData, QueryItem, GlobalCollection};
 
 #[pyclass(name = "register_func")]
 #[derive(Clone)]
@@ -66,7 +66,7 @@ impl IntoPy<Py<PyAny>> for QueryItem {
     }
 }
 
-pub fn initiate_python() -> Result<Py<PyAny>, PyErr> {
+pub fn initiate_python(config: &HydratedConfig) -> Result<Py<PyAny>, PyErr> {
     pyo3::append_to_inittab!(athen_rs_module);
     pyo3::prepare_freethreaded_python();
 
@@ -84,6 +84,11 @@ pub fn initiate_python() -> Result<Py<PyAny>, PyErr> {
 
         let asyncio = PyModule::import(py, "asyncio")?;
         let event_loop = asyncio.call_method0("new_event_loop")?.into_py(py);
+
+        if config.get_safe_async() {
+            let nest_asyncio = PyModule::import(py, "nest_asyncio")?;
+            nest_asyncio.call_method0("apply")?;
+        }
 
         Ok(event_loop)
     })?;
@@ -105,7 +110,7 @@ pub fn run_python(code: &str) -> Result<(), PyExecutionError> {
     Ok(())
 }
 
-pub async fn call_function(function: &Py<PyAny>, query_arg: QueryData, is_init: bool, event_loop: Option<&Py<PyAny>>) -> Result<Py<PyAny>, PyExecutionError> {
+pub async fn call_function(collection: &GlobalCollection,function: &Py<PyAny>, query_arg: QueryData, is_init: bool) -> Result<Py<PyAny>, PyExecutionError> {
     let ret = Python::with_gil(|py| -> PyResult<_> {
         let args = PyTuple::new(py, vec![query_arg.inner.into_py(py)]);
         
@@ -122,8 +127,7 @@ pub async fn call_function(function: &Py<PyAny>, query_arg: QueryData, is_init: 
             result
         }
         else {
-            let locals = PyDict::new(py); locals.set_item("coro", result)?; locals.set_item("loop", event_loop.unwrap())?;
-            py.eval("loop.run_until_complete(coro)", None, Some(locals))?.into_py(py)
+            collection.event_loop.call_method1(py, "run_until_complete", (&result, ))?
         };
 
         Ok(ret)
