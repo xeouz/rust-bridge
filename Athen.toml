@@ -1,0 +1,9 @@
+ip = "127.0.0.1"
+port = 8080
+
+[async]
+safe_async = false
+
+[documents]
+hello = "./endpoints/hello.py"
+    

@@ -62,6 +62,15 @@ impl IntoPy<Py<PyAny>> for QueryItem {
         match self {
             super::QueryItem::Number(num) => num.as_f64().into_py(py),
             super::QueryItem::String(string) => string.into_py(py),
+            super::QueryItem::Dict(data) => {
+                let pydata = PyDict::new(py);
+                
+                for (k, v) in data.inner.iter() {
+                    pydata.set_item(k.into_py(py), v.clone().into_py(py)).unwrap();
+                }
+
+                pydata.into()
+            }
         }
     }
 }
@@ -113,7 +122,6 @@ pub fn run_python(code: &str) -> Result<(), PyExecutionError> {
 pub async fn call_function(collection: &GlobalCollection,function: &Py<PyAny>, query_arg: QueryData, is_init: bool) -> Result<Py<PyAny>, PyExecutionError> {
     let ret = Python::with_gil(|py| -> PyResult<_> {
         let args = PyTuple::new(py, vec![query_arg.inner.into_py(py)]);
-        
         let result = if !is_init {
             function.call1(py, args)
         }

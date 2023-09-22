@@ -39,8 +39,8 @@ impl DataDocument {
         DataDocument { name: name, function: function }
     }
 
-    pub async fn execute_empty(&self, collection: &GlobalCollection,) {
-        let _ = self.execute(collection, QueryData::default(), true);
+    pub async fn execute_empty(&self, collection: &GlobalCollection) {
+        let _ = self.execute(collection, QueryData::default(), true).await;
     }
     pub async fn execute(&self, collection: &GlobalCollection, query: QueryData, is_init: bool) -> String {
         let result = call_function(collection, &self.function, query, is_init).await;
@@ -73,14 +73,15 @@ impl Handler for QueryHandler {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum QueryItem {
     Number(Number),
-    String(String)
+    String(String),
+    Dict(QueryData)
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct QueryData {
     #[serde(flatten)]
     inner: HashMap<String, QueryItem>,
@@ -110,7 +111,7 @@ pub async fn initiate() -> Result<(GlobalCollection, Vec<Route>), FileReadError>
     for dec in decs.iter() {
         let name = config.get_documents()[index].0.to_string();
         let doc = DataDocument::new(name.to_string(), dec.get_wraps().clone());
-
+        
         if dec.get_mode() == "init" {
             doc.execute_empty(&collection).await;
             continue;
